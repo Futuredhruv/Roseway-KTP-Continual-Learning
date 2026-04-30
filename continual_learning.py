@@ -8,7 +8,7 @@ from torch.optim import AdamW
 from torch.utils.data import Dataset, DataLoader, ConcatDataset
 from transformers import DistilBertTokenizer, DistilBertForSequenceClassification
 from peft import LoraConfig, get_peft_model, TaskType
-from typing import List, Tuple, Dict, Any, Optional
+from typing import List, Tuple, Dict, Optional
 import wandb
 
 # ==========================================
@@ -121,7 +121,7 @@ class ContinualLearner:
         self.classes_per_stage = total_classes // num_stages
         self.memory_size_per_class = memory_size_per_class
 
-        # Initialise Model & Tokenizer
+        # Initialise a fresh Model & Tokenizer for every instance to prevent weight leakage
         self.tokenizer = DistilBertTokenizer.from_pretrained('distilbert-base-uncased')
         base_model = DistilBertForSequenceClassification.from_pretrained('distilbert-base-uncased', num_labels=total_classes)
 
@@ -173,14 +173,15 @@ class ContinualLearner:
 
         return accuracies
 
-    def train(self, data_handler: DataHandler, epochs_per_stage: int = 3) -> Tuple[nn.Module, List[List[float]]]:
+    def train(self, data_handler: DataHandler, use_replay: bool = False, epochs_per_stage: int = 3) -> Tuple[nn.Module, List[List[float]]]:
         """Main training loop orchestrating data mixing and parameter updates."""
-
-        # Initialise MLOps Tracking
-        wandb.init(project="Roseway_KTP_Continual_Learning", config={
+        
+        run_name = "Experience_Replay" if use_replay else "Naive_Baseline"
+        wandb.init(project="Roseway_KTP_Continual_Learning", name=run_name, config={
             "epochs": epochs_per_stage,
-            "memory_size": self.memory_size_per_class,
-            "model": "DistilBERT+LoRA"
+            "memory_size": self.memory_size_per_class if use_replay else 0,
+            "model": "DistilBERT+LoRA",
+            "strategy": run_name
         })
 
         for stage in range(self.num_stages):
@@ -192,11 +193,14 @@ class ContinualLearner:
             train_texts, train_labels, val_texts, val_labels = data_handler.get_stage_data(start_class, end_class)
             current_task_dataset = FoodFactsDataset(train_texts, train_labels, self.tokenizer)
 
-            # 2. Mix with Replay Buffer natively in PyTorch
-            memory_dataset = self.memory_buffer.get_memory_dataset(self.tokenizer)
-            if memory_dataset is not None:
-                print(f"Mixing replay samples from previous stages...")
-                combined_dataset = ConcatDataset([current_task_dataset, memory_dataset])
+            # 2. Mix with Replay Buffer (ONLY if use_replay is True)
+            if use_replay:
+                memory_dataset = self.memory_buffer.get_memory_dataset(self.tokenizer)
+                if memory_dataset is not None:
+                    print(f"Mixing replay samples from previous stages...")
+                    combined_dataset = ConcatDataset([current_task_dataset, memory_dataset])
+                else:
+                    combined_dataset = current_task_dataset
             else:
                 combined_dataset = current_task_dataset
 
@@ -229,9 +233,10 @@ class ContinualLearner:
                 print(f"  Epoch {epoch + 1}/{epochs_per_stage} | Training Loss: {avg_loss:.4f}")
                 wandb.log({"train/loss": avg_loss, "epoch_absolute": stage * epochs_per_stage + epoch})
 
-            # 4. Update Memory Buffer & Evaluate
-            mem_texts, mem_labels = data_handler.get_replay_samples(start_class, end_class, self.memory_size_per_class)
-            self.memory_buffer.update_memory(mem_texts, mem_labels)
+            # 4. Update Memory Buffer (ONLY if use_replay is True)
+            if use_replay:
+                mem_texts, mem_labels = data_handler.get_replay_samples(start_class, end_class, self.memory_size_per_class)
+                self.memory_buffer.update_memory(mem_texts, mem_labels)
 
             print(f"\nEvaluating Stage {stage}...")
             stage_accuracies = self.evaluate(stage)
@@ -249,23 +254,47 @@ class ContinualLearner:
 # 5. Execution Pipeline
 # ==========================================
 if __name__ == "__main__":
+    from IPython.display import display
+    
     # 1. Enforce strict reproducibility
     set_seeds(42)
 
-    # 2. Initialise the pipeline components
-    train_csv_path = '/content/clean_train.csv' # UPDATE PATH
-    val_csv_path = '/content/clean_val.csv'     # UPDATE PATH
+    # 2. Initialise Data
+    train_csv_path = '/content/clean_train.csv' 
+    val_csv_path = '/content/clean_val.csv'     
 
-    data_handler = DataHandler(train_csv_path, val_csv_path)
-    learner = ContinualLearner(num_stages=10, total_classes=100, memory_size_per_class=50)
+    if not os.path.exists(train_csv_path) or not os.path.exists(val_csv_path):
+        print("ERROR: clean_train.csv and clean_val.csv must be in the same folder as this script.")
+    else:
+        data_handler = DataHandler(train_csv_path, val_csv_path)
+        
+        # ----------------------------------------------------
+        # EXPERIMENT 1: NAÏVE BASELINE
+        # ----------------------------------------------------
+        print("\n\n" + "#"*50)
+        print("COMMENCING EXPERIMENT 1: NAÏVE BASELINE")
+        print("#"*50)
+        baseline_learner = ContinualLearner(num_stages=10, total_classes=100)
+        _, baseline_matrix = baseline_learner.train(data_handler, use_replay=False, epochs_per_stage=3)
+        
+        df_baseline = pd.DataFrame(baseline_matrix)
+        df_baseline.index = [f"Trained on Stage {i}" for i in range(10)]
+        df_baseline.columns = [f"Eval on Stage {i}" for i in range(10)]
+        print("\n=== NAÏVE BASELINE ACCURACY MATRIX ===")
+        print(df_baseline.round(4) * 100)
 
-    # 3. Execute training
-    final_model, final_matrix = learner.train(data_handler, epochs_per_stage=3)
-
-    # 4. Display Results
-    matrix_df = pd.DataFrame(final_matrix)
-    matrix_df.index = [f"Trained on Stage {i}" for i in range(10)]
-    matrix_df.columns = [f"Eval on Stage {i}" for i in range(10)]
-    print("\n=== FINAL ACCURACY MATRIX ===")
-    from IPython.display import display
-    display(matrix_df.round(4) * 100)
+        # ----------------------------------------------------
+        # EXPERIMENT 2: EXPERIENCE REPLAY
+        # ----------------------------------------------------
+        print("\n\n" + "#"*50)
+        print("COMMENCING EXPERIMENT 2: EXPERIENCE REPLAY")
+        print("#"*50)
+        # Note: A completely fresh ContinualLearner is initialised to ensure zero weight leakage
+        replay_learner = ContinualLearner(num_stages=10, total_classes=100, memory_size_per_class=50)
+        _, replay_matrix = replay_learner.train(data_handler, use_replay=True, epochs_per_stage=3)
+        
+        df_replay = pd.DataFrame(replay_matrix)
+        df_replay.index = [f"Trained on Stage {i}" for i in range(10)]
+        df_replay.columns = [f"Eval on Stage {i}" for i in range(10)]
+        print("\n=== EXPERIENCE REPLAY ACCURACY MATRIX ===")
+        print(df_replay.round(4) * 100)
