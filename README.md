@@ -28,3 +28,12 @@ It is recommended to run this project within a Python Virtual Environment (e.g.,
 2. Install the required dependencies:
    ```bash
    pip install -r requirements.txt
+
+## Execution & Weights and Biases (W&B)
+
+This project utilises [Weights & Biases (W&B)](https://wandb.ai/) for rigorous experiment tracking and metric logging.
+
+**Reviewer Instructions:** 
+To run this code locally without authenticating a personal W&B account or requiring an API key, simply prepend your execution command with the offline flag. This will disable cloud syncing and print all progress and metrics directly to your local console:
+```bash
+WANDB_MODE=offline python continual_learning.py
