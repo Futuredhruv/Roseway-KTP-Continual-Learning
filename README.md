@@ -34,6 +34,9 @@ It is recommended to run this project within a Python Virtual Environment (e.g.,
 This project utilises [Weights & Biases (W&B)](https://wandb.ai/) for rigorous experiment tracking and metric logging.
 
 **Reviewer Instructions:** 
+
+The raw Open Food Facts dataset was filtered for the top 100 classes and capped at 1,500 samples per class to generate the training data. The data cleaning script is available as a .zip.
+
 To run this code locally without authenticating a personal W&B account or requiring an API key, simply prepend your execution command with the offline flag. This will disable cloud syncing and print all progress and metrics directly to your local console:
 ```bash
 WANDB_MODE=offline python continual_learning.py
