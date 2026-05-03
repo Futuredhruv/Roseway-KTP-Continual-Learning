@@ -8,6 +8,14 @@ This repository contains the codebase for a Class-Incremental Learning (CIL) pip
 
 To adhere to strict computational efficiency and memory constraints, the architecture utilises **Parameter-Efficient Fine-Tuning (PEFT)** via Low-Rank Adaptation (LoRA), alongside a targeted **Experience Replay** memory buffer to protect historical knowledge.
 
+## Experiment Registration & Reproducibility
+
+To ensure full transparency, scientific rigour, and reproducibility of the continual learning methodologies evaluated in this repository, the experimental design and baseline protocols have been registered on the Open Science Framework (OSF).
+
+* **OSF Registration DOI:** [10.17605/OSF.IO/XQGDY](https://doi.org/10.17605/OSF.IO/XQGDY)
+
+This registration formally documents the class-incremental learning strategy, evaluation metrics (including quantitative measures of catastrophic forgetting), and model architecture choices for the Open Food Facts classification task.
+
 ## Repository Structure
 * `continual_learning.py`: The main execution script containing the OOP-structured Continual Learner, custom PyTorch Datasets, and Replay Buffer logic.
 * `requirements.txt`: Required dependencies for execution.
